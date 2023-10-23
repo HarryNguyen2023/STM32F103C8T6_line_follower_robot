@@ -3,11 +3,6 @@
 
 #include "stm32f1xx_hal.h"
 
-// Define some variables
-extern int Kp;
-extern int Ki;
-extern int Kd;
-extern int Ko;
 extern uint16_t time_frame;
 
 typedef enum
@@ -33,6 +28,14 @@ typedef struct
     float pos_Kp;
 }Motion_profile;
 
+// Strcuture for PID speed control
+typedef struct 
+{
+    float Kp;
+    float Ki;
+    float Kd;
+}Speed_controller;
+
 // Structure to contains the control information of the motors
 typedef struct
 {
@@ -53,6 +56,9 @@ typedef struct
     uint16_t MAX_INPUT_SPEED;
     uint8_t DEAD_BAND;
 
+    // Speed controller parameter
+    Speed_controller speed_controller;
+
     // Motion profile
     Motion_profile motion_profile;
 
@@ -63,7 +69,9 @@ typedef struct
     uint32_t current_encoder;
     uint32_t prev_encoder;
     int16_t prev_encoder_feedback;
-    int32_t integral_error;
+    float integral_error;
+    float lim_max_integ;
+    float lim_min_integ;
     int32_t output;
     uint8_t moving;
 }PID_motor;
@@ -75,7 +83,7 @@ void speedControlPID(PID_motor* motor);
 void positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor);
 void motorBrake(PID_motor* motor);
 void resetPID(PID_motor* motor);
-void updatePID(int* pid_params);
+void updatePID(int* pid_params, PID_motor* motor);
 float inputSpeedHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int speed);
 uint8_t inputPositionHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int32_t position_angle, uint16_t motion_velocity, uint16_t motion_acel);
 

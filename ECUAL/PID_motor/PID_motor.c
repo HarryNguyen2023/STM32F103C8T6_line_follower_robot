@@ -3,10 +3,6 @@
 #include <stdlib.h>
 
 // Define some PID variables
-int Kp = 10;
-int Ki = 0;
-int Kd = 0;
-int Ko = 1;
 uint16_t time_frame = 20;    // Time frame to milisecond
 
 // ----------------------------------------------------- Static functions hidden from users ----------------------------------------------
@@ -21,7 +17,7 @@ static uint8_t motionProfileTracking(PID_motor* motor);
 static void outputSpeedPID(PID_motor* motor)
 {
     int32_t feedback;
-    float error, output;
+    float error, output, prop;
     // Get number of the encoder pulse in the last time frame
     if(motor->direction == 0 && (motor->current_encoder < motor->prev_encoder) && (motor->prev_encoder - motor->current_encoder > 16000))
     {
@@ -39,13 +35,29 @@ static void outputSpeedPID(PID_motor* motor)
     error = motor->targetPulsePerFrame - feedback;
     motor->real_speed = feedback;
     // Get the output of the PID controller with the new formula to avoid derivative kick as well as accumulation error when updating PID parameters
-    output = (Kp * error - Kd * (feedback - motor->prev_encoder_feedback) + motor->integral_error) * 1.0 / Ko;
-    motor->integral_error += Ki * error;
+    prop = motor->speed_controller.Kp * error;
+    motor->integral_error += motor->speed_controller.Ki * error;
+    // Anti integral wind-up 
+    if(motor->MAX_PWM > prop)
+        motor->lim_max_integ = motor->MAX_PWM - prop;
+    else 
+        motor->lim_max_integ = 0;
+    
+    if(- motor->MAX_PWM < prop)
+        motor->lim_min_integ = - motor->MAX_PWM - prop;
+    else
+        motor->lim_min_integ = 0;
+    // Constraint the integral
+    if(motor->integral_error > motor->lim_max_integ)
+        motor->integral_error = motor->lim_max_integ;
+    else if(motor->integral_error < motor->lim_min_integ)
+        motor->integral_error = motor->lim_min_integ;
+
+    output = prop - motor->speed_controller.Kd * (feedback - motor->prev_encoder_feedback) + motor->integral_error;
     // Update the parameters
     motor->prev_encoder = motor->current_encoder;
     motor->prev_encoder_feedback = feedback;
     // Limit the ouput velocity of the motor
-    // output += motor->output;
     if(output > motor->MAX_PWM)
         output = motor->MAX_PWM;
     else if(output < - motor->MAX_PWM)
@@ -202,12 +214,11 @@ void motorBrake(PID_motor* motor)
 }
 
 // Function to update the PID parameters
-void updatePID(int* pid_params)
+void updatePID(int* pid_params, PID_motor* motor)
 {
-    Kp = pid_params[0];
-    Ki = pid_params[1];
-    Kd = pid_params[2];
-    Ko = pid_params[3];
+    motor->speed_controller.Kp = pid_params[0];
+    motor->speed_controller.Ki = pid_params[1];
+    motor->speed_controller.Kd = pid_params[2];
 }
 
 // Function to reset the PID value of the motor when it is not moving
@@ -243,17 +254,17 @@ float inputSpeedHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int speed)
     else if(speed < - motor->MAX_INPUT_SPEED)
         speed = - motor->MAX_INPUT_SPEED;
     // Check if command the motor to stop
-    if(speed == 0)
-    {
-        dutyCycleUpdate(0, motor);
-        motorBrake(motor);
-        // Reaset the PID value
-        resetPID(motor);
-        // Stop the timer 
-        // HAL_TIM_Base_Stop_IT(htim);
-        return 0;
-    }
-    else if(speed > 0)
+    // if(speed == 0)
+    // {
+    //     dutyCycleUpdate(0, motor);
+    //     motorBrake(motor);
+    //     // Reaset the PID value
+    //     resetPID(motor);
+    //     // Stop the timer 
+    //     // HAL_TIM_Base_Stop_IT(htim);
+    //     return 0;
+    // }
+    if(speed > 0)
         motor->direction = 0;
     else
         motor->direction = 1;
@@ -262,7 +273,7 @@ float inputSpeedHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int speed)
     {
         motor->moving = 1;
         // Start the timer for controlling the motor speed
-        HAL_TIM_Base_Start_IT(htim);
+        // HAL_TIM_Base_Start_IT(htim);
     }
     // Convert the desired speed to pulse per frame and input to the motor
     motor->targetPulsePerFrame = (speed * motor->encoder_rev * 1.0) * time_frame / 60000.0;
@@ -279,8 +290,10 @@ void speedControlPID(PID_motor* motor)
 
     // Get the absolute value of the motor
     uint16_t pwm_dutycycle = abs(motor->output);
-    if(pwm_dutycycle < motor->DEAD_BAND)
+    if(pwm_dutycycle < motor->DEAD_BAND && pwm_dutycycle > 5)
         pwm_dutycycle = motor->DEAD_BAND;
+    else if(pwm_dutycycle < 5)
+        pwm_dutycycle = 0;
 
     // Control the direction of the motor
     if(motor->direction == 0)
@@ -293,6 +306,9 @@ void speedControlPID(PID_motor* motor)
         HAL_GPIO_WritePin(motor->motor_ports[0], motor->motor_pins[0], 0);
         HAL_GPIO_WritePin(motor->motor_ports[1], motor->motor_pins[1], 1);
     }
+
+    if(pwm_dutycycle == 0)
+        motorBrake(motor);
     // Feed the value of the PWM duty cycle
     dutyCycleUpdate(pwm_dutycycle, motor);
 }

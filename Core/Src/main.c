@@ -202,7 +202,7 @@ int main(void)
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 
   // Initiate the TIMER mode
-  // HAL_TIM_Base_Start_IT(&htim1);
+  HAL_TIM_Base_Start_IT(&htim1);
 
   /* USER CODE END 2 */
 
@@ -695,7 +695,8 @@ static void commandHandling(uint8_t* rcv_buffer, uint16_t msg_size)
       // Get the encoder value of the specific motor and transmit it via UART
       case ENCODER_READ: ;
         uint32_t motor1_enc = readEncoder(&motor1);
-        sprintf((char*)tx_buffer, "Encoder: %lu\r\n", motor1_enc);
+        uint32_t motor2_enc = readEncoder(&motor2);
+        sprintf((char*)tx_buffer, "E1: %lu-E2: %lu\r\n", motor1_enc, motor2_enc);
         STM32_UART_sendString(&huart1, tx_buffer);
         break;
       case GET_BAUDRATE: ;
@@ -708,6 +709,7 @@ static void commandHandling(uint8_t* rcv_buffer, uint16_t msg_size)
         break;
       case RESET_PID:
         resetPID(&motor1);
+        resetPID(&motor2);
         STM32_UART_sendString(&huart1, (uint8_t*)"Reset the motor\r\n");
         break;
       default:
@@ -775,7 +777,7 @@ static void commandHandling(uint8_t* rcv_buffer, uint16_t msg_size)
         token = strtok_r(NULL, " ", &rest);
       }
       // Call function to update the PID values
-      updatePID(pid_params);
+      updatePID(pid_params, &motor1);
     }
   }
 }

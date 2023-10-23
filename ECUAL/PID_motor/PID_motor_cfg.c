@@ -13,40 +13,10 @@ PID_motor motor1 =
     250,
     20,
     {
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0.08,
+        17.5, 
+        1.0,
+        0.0,
     },
-    0,
-    0.0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0
-};
-
-// Parameters for motor 2
-PID_motor motor2 = 
-{
-    {GPIOB, GPIOA},
-    {GPIO_PIN_3, GPIO_PIN_15},
-    TIM3,
-    TIM4,
-    PWM_CHANNEL_2,
-    374,
-    499,
-    250,
-    20,
     {
         0,
         0,
@@ -65,7 +35,51 @@ PID_motor motor2 =
     0,
     0,
     0,
+    0.0,
+    0.0,
+    0.0,
     0,
+    0
+};
+
+// Parameters for motor 2
+PID_motor motor2 = 
+{
+    {GPIOB, GPIOA},
+    {GPIO_PIN_3, GPIO_PIN_15},
+    TIM3,
+    TIM4,
+    PWM_CHANNEL_2,
+    374,
+    499,
+    250,
+    20,
+    {
+        19.0, 
+        1.0,
+        0.0,
+    },
+    {
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0.08,
+    },
+    0,
+    0.0,
+    0,
+    0,
+    0,
+    0,
+    0.0,
+    0.0,
+    0.0,
     0,
     0
 };
