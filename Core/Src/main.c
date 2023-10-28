@@ -23,13 +23,11 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
-#include "../../ECUAL/Line_sensor/Line_sensor.h"
-#include "../../ECUAL/Line_sensor/Line_sensor_config.h"
+
+#include "../../ECUAL/Line_controller/Line_controller.h"
+#include "../../ECUAL/Line_controller/Line_controller_cfg.h"
 #include "../../ECUAL/PID_motor/PID_motor.h"
 #include "../../ECUAL/PID_motor/PID_motor_cfg.h"
-#include "../../ECUAL/PID_motor/motor_commands.h"
-#include "../../ECUAL/UART/STM32_UART.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,7 +37,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define BUFFER_SIZE 20
+
+// Define the I2C address of the slave controller
+#define SLAVE_ADD 8
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,7 +61,7 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
-DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 
@@ -78,73 +79,116 @@ static void MX_TIM4_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
-static void commandHandling(uint8_t* rcv_buffer, uint16_t msg_size);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+// Current used controller
 typedef enum
 {
-  NO_CONTROL,
-  SPEED_CONTROLLER,
+  LINE_CONTROLLER,
   POSITION_CONTROLLER
-}Motor_controller;
+}Controller_type;
+
+// Condition of avoiding obstacle
+typedef enum
+{
+  FAR,
+  CLOSE,
+  ATTEMPING,
+  DONE_AVOID
+}Obstacle_condition;
+
+// Sequence of avoiding obstacle
+typedef enum
+{
+  ROTATE_RIGHT_1,
+  LINEAR_100_1,
+  ROTATE_LEFT_1,
+  LINEAR_200,
+  ROTATE_LEFT_2,
+  LINEAR_100_2,
+  ROTATE_RIGHT_2,
+  DONE
+}Obstacle_avoidance;
+
+Controller_type current_controller = LINE_CONTROLLER;
+Obstacle_condition obstacle_condition = FAR;
+Obstacle_avoidance obstacle_avoidance = ROTATE_RIGHT_1;
 
 // Global variables
-uint8_t rcv_buffer[BUFFER_SIZE] = {0};
-uint8_t tx_buffer[45];
+uint8_t tx_buffer[20];
+uint8_t count = 0;
 
-// Buffer to store the commands
-int wheel_velocities[2];
-int pid_params[4];
-int position_params[3];
-Motor_controller controller;
+uint8_t* obs_command;
+uint8_t last_obs_command = 'a';
+uint8_t running = 0;
 
-// Function to handle to timer interrupt service
+// // Function to handle I2C DMA service
+void HAL_I2C_MasterRxCpltCallback (I2C_HandleTypeDef* hi2c)
+{
+  // Check if 2 consecutive values are the same to avoid noise
+  if(*obs_command == last_obs_command && last_obs_command != 'a')
+  {
+    // Reduce the speed of the motor when close to the obstacle
+    if(last_obs_command == 'b')
+    {
+      linearVelocityUpdate(&robot_line_controller, 0.2);
+      obstacle_condition = CLOSE;
+    } 
+    // Change to position control mode when close to the obstalce    
+    else if(last_obs_command == 'c')
+    {
+      robotStop(&motor_left, &motor_right);
+      obstacle_condition = ATTEMPING;
+      current_controller = POSITION_CONTROLLER;
+    }
+  }
+  last_obs_command = *obs_command;
+}
+
 // Function to handle timer interrupt callback 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
-  if(htim->Instance == TIM1)
+  // Get the obstacle distance value from the slave controller
+  if(obstacle_condition < ATTEMPING)
   {
-    switch (controller)
+    HAL_I2C_Master_Receive_DMA(&hi2c1, ((SLAVE_ADD << 0x01) | 0x01), obs_command, 1);
+  }
+
+  switch (current_controller)
+  {
+  case LINE_CONTROLLER:
+    // Activate the line controller every 100ms
+    if(++count == 5)
     {
-    case SPEED_CONTROLLER:
-      speedControlPID(&motor1);
-      speedControlPID(&motor2);
-      sprintf((char*)tx_buffer, "%ld,%ld\r\n", motor1.real_speed, motor2.real_speed);
-      STM32_UART_sendString(&huart1, tx_buffer);
-      break;
-    case POSITION_CONTROLLER: ;
-      positionControlPID(&htim1, &motor1);
-      positionControlPID(&htim1, &motor2);
-      sprintf((char*)tx_buffer, "M1: %.2f - %.2f - %.2f - %ld\r\n", motor1.targetPulsePerFrame, motor1.motion_profile.command_position, motor1.motion_profile.command_velocity ,motor1.motion_profile.current_position);
-      STM32_UART_sendString(&huart1, tx_buffer);
-      sprintf((char*)tx_buffer, "M2: %.2f - %.2f - %.2f - %ld\r\n", motor2.targetPulsePerFrame, motor2.motion_profile.command_position, motor2.motion_profile.command_velocity ,motor2.motion_profile.current_position);
-      STM32_UART_sendString(&huart1, tx_buffer);
-      break;
-    default:
-      break;
+      count = 0;
+      lineControllerPID(&hadc1, &motor_left, &motor_right, &robot_line_controller);
     }
+    // Control the speed of 2 motors every 20ms
+    speedControlPID(&motor_left);
+    speedControlPID(&motor_right);
+
+    break;
+  
+  case POSITION_CONTROLLER:
+    // Control the position of the robot every 20ms
+    if(positionControlPID(&htim1, &motor_left) && positionControlPID(&htim1, &motor_right))
+      running = 0;  
+    break;
+
+  default:
+    break;
   }
+
+  // Send the real-time data via Bluetooth to computer
+  sprintf((char*)tx_buffer,"%ld,%ld,%.2f\r\n", motor_left.real_speed, motor_right.real_speed, robot_line_controller.e2);
+  HAL_UART_Transmit_DMA(&huart1, tx_buffer, strlen((char*)tx_buffer));
 }
 
-// Function to handle UART reception interrupt
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t msg_size)
-{
-  // Check if the interrurpt source is due to usart 1 module
-  if(huart->Instance == USART1)
-  {
-    // Extract the command data
-    commandHandling(rcv_buffer, msg_size);
 
-    // Clear the bufer
-    memset(rcv_buffer, 0, BUFFER_SIZE);
-
-    // Restart the UART DMA IDLE line reception
-    STM32_UART_IDLE_Start(huart, &hdma_usart1_rx, rcv_buffer, BUFFER_SIZE); 
-  }
-}
 /* USER CODE END 0 */
 
 /**
@@ -185,13 +229,8 @@ int main(void)
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
 
-  // Initiate the motor GPIO pins
-  motorInit(motor1);
-  motorInit(motor2);
-
-  // Initiate the UART IDLE line detection
-  STM32_UART_IDLE_Start(&huart1, &hdma_usart1_rx, rcv_buffer, BUFFER_SIZE);
-  STM32_UART_sendString(&huart1, (uint8_t*)"Hello Vinh Gia\r\n");
+  // Initiate the line follower controller
+  lineControllerInit(&hadc1, motor_left, motor_right, &robot_line_controller, 0.4);
 
   // Initiate the PWM of the 2 motors
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
@@ -201,15 +240,75 @@ int main(void)
   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 
-  // Initiate the TIMER mode
+  HAL_Delay(1000);
+
+  // Scan for slave device
+  if(HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(SLAVE_ADD << 1), 3, 5)  != HAL_OK)
+  {
+    HAL_UART_Transmit_DMA(&huart1, (uint8_t*)"Error: Slave no found\r\n", 24);
+    return 0;
+  }
+
+  // Send signal message via Bluetooth
+  HAL_UART_Transmit_DMA(&huart1, (uint8_t*)"System is ready\r\n", 17);
+
+  // Initiate the system overall TIMER
   HAL_TIM_Base_Start_IT(&htim1);
 
+  // Read the line sensor for the first time
+  lineControllerPID(&hadc1, &motor_left, &motor_right, &robot_line_controller);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    // Sequence to avoid obstacle
+    if(obstacle_condition == ATTEMPING && current_controller == POSITION_CONTROLLER)
+    {
+      if(!running)
+      {
+        switch (obstacle_avoidance++)
+        {
+        case ROTATE_RIGHT_1:
+          robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+          break;
+
+        case LINEAR_100_1:
+          robotLinear(&motor_left, &motor_right, &robot_line_controller, 100, 120, 30);
+          break;
+        
+        case ROTATE_LEFT_1:
+          robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+          break;
+
+        case LINEAR_200:
+          robotLinear(&motor_left, &motor_right, &robot_line_controller, 200, 120, 30);
+          break;
+
+        case ROTATE_LEFT_2:
+          robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+          break;
+        
+        case LINEAR_100_2:
+          robotLinear(&motor_left, &motor_right, &robot_line_controller, 100, 120, 30);
+          break;
+
+        case ROTATE_RIGHT_2:
+          robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+          break;
+        
+        case DONE:
+          obstacle_condition = DONE_AVOID;
+          current_controller = LINE_CONTROLLER;
+          break;
+
+        default:
+          break;
+        }
+        running = 1;
+      }
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -633,9 +732,9 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
-  /* DMA1_Channel5_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
+  /* DMA1_Channel4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
   /* DMA1_Channel7_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
@@ -684,103 +783,7 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-// Function to extract data from command message sent via UART 
-static void commandHandling(uint8_t* rcv_buffer, uint16_t msg_size)
-{
-  uint8_t command = rcv_buffer[0];
-  if(msg_size == 1)
-  {
-    switch(command)
-    {
-      // Get the encoder value of the specific motor and transmit it via UART
-      case ENCODER_READ: ;
-        uint32_t motor1_enc = readEncoder(&motor1);
-        uint32_t motor2_enc = readEncoder(&motor2);
-        sprintf((char*)tx_buffer, "E1: %lu-E2: %lu\r\n", motor1_enc, motor2_enc);
-        STM32_UART_sendString(&huart1, tx_buffer);
-        break;
-      case GET_BAUDRATE: ;
-        uint32_t uart_baudrate = huart1.Init.BaudRate;
-        sprintf((char*)tx_buffer,"Baudrate: %lu\r\n", uart_baudrate);
-        STM32_UART_sendString(&huart1, tx_buffer);
-        break;
-      case PING:
-        STM32_UART_sendString(&huart1, (uint8_t*)"STM32 active\r\n");
-        break;
-      case RESET_PID:
-        resetPID(&motor1);
-        resetPID(&motor2);
-        STM32_UART_sendString(&huart1, (uint8_t*)"Reset the motor\r\n");
-        break;
-      default:
-        STM32_UART_sendString(&huart1, (uint8_t*)"Command error!\r\n");
-        break;
-    }
-  }
-  else
-  {
-    // Case control the velocity of the motor
-    if(command == VELOCITY_CONTROL)
-    {
-      controller = SPEED_CONTROLLER;
-      // Get the actual velocity command 
-      uint8_t command_idx = 0;
-      char* rest = NULL;
-      char* token = strtok_r((char*)rcv_buffer, " ", &rest);
-      while(token != NULL)
-      {
-        if(command_idx > 0)
-          wheel_velocities[command_idx - 1] = atoi(token);
-        // Constraint the index value 
-        if(++command_idx == 3) 
-          command_idx = 0;
-        token = strtok_r(NULL, " ", &rest);
-      }
-      float target_1 = inputSpeedHandling(&htim1, &motor1, wheel_velocities[0]);
-      float target_2 = inputSpeedHandling(&htim1, &motor2, wheel_velocities[1]);
-      // For debugging
-      sprintf((char*)tx_buffer,"Speed 1: %d - %.3f, Speed2: %d - %.3f\r\n", wheel_velocities[0], target_1, wheel_velocities[1], target_2);
-      STM32_UART_sendString(&huart1, tx_buffer);
-    }
-    else if(command == MOTOR_POSITION)
-    {
-      controller = POSITION_CONTROLLER;
-      // Get the actual velocity command 
-      uint8_t command_idx = 0;
-      char* rest = NULL;
-      char* token = strtok_r((char*)rcv_buffer, " ", &rest);
-      while(token != NULL)
-      {
-        if(command_idx > 0)
-          position_params[command_idx - 1] = atoi(token);
-        // Constraint the index value 
-        if(++command_idx == 4) 
-          command_idx = 0;
-        token = strtok_r(NULL, " ", &rest);
-      }
-      if(! (inputPositionHandling(&htim1, &motor1, position_params[0], position_params[1], position_params[2]) && inputPositionHandling(&htim1, &motor2, position_params[0], position_params[1], position_params[2])))
-          STM32_UART_sendString(&huart1, (uint8_t*)"Command error!\r\n");
-    }
-    else if(command == UPDATE_PID)
-    {
-      // Get the actual velocity command 
-      uint8_t command_idx = 0;
-      char* rest = NULL;
-      char* token = strtok_r((char*)rcv_buffer, " ", &rest);
-      while(token != NULL)
-      {
-        if(command_idx > 0)
-          pid_params[command_idx - 1] = atoi(token);
-        // Constraint the index value 
-        if(++command_idx == 5) 
-          command_idx = 0;
-        token = strtok_r(NULL, " ", &rest);
-      }
-      // Call function to update the PID values
-      updatePID(pid_params, &motor1);
-    }
-  }
-}
+
 /* USER CODE END 4 */
 
 /**

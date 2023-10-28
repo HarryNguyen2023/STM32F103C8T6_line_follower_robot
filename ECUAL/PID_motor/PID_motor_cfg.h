@@ -3,7 +3,7 @@
 
 #include "PID_motor.h"
 
-extern PID_motor motor1;
-extern PID_motor motor2;
+extern PID_motor motor_left;
+extern PID_motor motor_right;
 
 #endif

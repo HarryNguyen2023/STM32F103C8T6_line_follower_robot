@@ -19,6 +19,6 @@ typedef struct
 
 // Function prototypes
 void lineSensorInit(ADC_HandleTypeDef* adc, Line_sensor* line_sensor);
-void getSensorDistance(ADC_HandleTypeDef* adc, Line_sensor* line_sensor);
+void lineSensorDistance(ADC_HandleTypeDef* adc, Line_sensor* line_sensor);
 
 #endif

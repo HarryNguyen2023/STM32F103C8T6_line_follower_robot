@@ -9,9 +9,9 @@ uint16_t time_frame = 20;    // Time frame to milisecond
 // Function prototypes
 static void outputSpeedPID(PID_motor* motor);
 static void updatePosition(PID_motor* motor);
-static void dutyCycleUpdate(uint16_t duty_cycle, PID_motor* motor);
 static void resetEncoder(PID_motor* motor);
 static uint8_t motionProfileTracking(PID_motor* motor);
+static uint32_t readEncoder(PID_motor* motor);
 
 // Function to get the output value of the PID speed controller
 static void outputSpeedPID(PID_motor* motor)
@@ -53,7 +53,7 @@ static void outputSpeedPID(PID_motor* motor)
     else if(motor->integral_error < motor->lim_min_integ)
         motor->integral_error = motor->lim_min_integ;
 
-    output = prop - motor->speed_controller.Kd * (feedback - motor->prev_encoder_feedback) + motor->integral_error;
+    output = prop + motor->speed_controller.Kd * (feedback - motor->prev_encoder_feedback) + motor->integral_error;
     // Update the parameters
     motor->prev_encoder = motor->current_encoder;
     motor->prev_encoder_feedback = feedback;
@@ -63,28 +63,6 @@ static void outputSpeedPID(PID_motor* motor)
     else if(output < - motor->MAX_PWM)
         output = - motor->MAX_PWM;
     motor->output = output;
-}
-
-// Function to update the PWM duty cycle of the motor
-static void dutyCycleUpdate(uint16_t duty_cycle, PID_motor* motor)
-{
-    switch (motor->pwm_channel)
-    {
-        case PWM_CHANNEL_1:
-            motor->pwm_tim->CCR1 = duty_cycle;
-            break;
-        case PWM_CHANNEL_2:
-            motor->pwm_tim->CCR2 = duty_cycle;
-            break;
-        case PWM_CHANNEL_3:
-            motor->pwm_tim->CCR3 = duty_cycle;
-            break;
-        case PWM_CHANNEL_4:
-            motor->pwm_tim->CCR4 = duty_cycle;
-            break;
-    default:
-        break;
-    }
 }
 
 // Function to generate the motion progile for the motor
@@ -145,6 +123,12 @@ static uint8_t motionProfileTracking(PID_motor* motor)
     return 0;
 }
 
+// Function to get the encoder value of the motor
+static uint32_t readEncoder(PID_motor* motor)
+{
+    return motor->encoder_tim->CNT / 4;
+}
+
 // Function to reset the encoder value of the motor
 static void resetEncoder(PID_motor* motor)
 {
@@ -200,10 +184,26 @@ void motorInit(PID_motor motor)
     }
 }
 
-// Function to get the encoder value of the motor
-uint32_t readEncoder(PID_motor* motor)
+// Function to update the PWM duty cycle of the motor
+void dutyCycleUpdate(uint16_t duty_cycle, PID_motor* motor)
 {
-    return motor->encoder_tim->CNT / 4;
+    switch (motor->pwm_channel)
+    {
+        case PWM_CHANNEL_1:
+            motor->pwm_tim->CCR1 = duty_cycle;
+            break;
+        case PWM_CHANNEL_2:
+            motor->pwm_tim->CCR2 = duty_cycle;
+            break;
+        case PWM_CHANNEL_3:
+            motor->pwm_tim->CCR3 = duty_cycle;
+            break;
+        case PWM_CHANNEL_4:
+            motor->pwm_tim->CCR4 = duty_cycle;
+            break;
+    default:
+        break;
+    }
 }
 
 // Function to brake the motor immediately
@@ -211,14 +211,6 @@ void motorBrake(PID_motor* motor)
 {
     HAL_GPIO_WritePin(motor->motor_ports[0], motor->motor_pins[0], 0);
     HAL_GPIO_WritePin(motor->motor_ports[1], motor->motor_pins[1], 0);
-}
-
-// Function to update the PID parameters
-void updatePID(int* pid_params, PID_motor* motor)
-{
-    motor->speed_controller.Kp = pid_params[0];
-    motor->speed_controller.Ki = pid_params[1];
-    motor->speed_controller.Kd = pid_params[2];
 }
 
 // Function to reset the PID value of the motor when it is not moving
@@ -246,25 +238,15 @@ void resetPID(PID_motor* motor)
 }
 
 // Function to handle the speed input of the PID controller
-float inputSpeedHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int speed)
+void inputSpeedHandling(PID_motor* motor, float speed)
 {
     // Rescale the input rpm speed
     if(speed > motor->MAX_INPUT_SPEED)
         speed = motor->MAX_INPUT_SPEED;
     else if(speed < - motor->MAX_INPUT_SPEED)
         speed = - motor->MAX_INPUT_SPEED;
-    // Check if command the motor to stop
-    // if(speed == 0)
-    // {
-    //     dutyCycleUpdate(0, motor);
-    //     motorBrake(motor);
-    //     // Reaset the PID value
-    //     resetPID(motor);
-    //     // Stop the timer 
-    //     // HAL_TIM_Base_Stop_IT(htim);
-    //     return 0;
-    // }
-    if(speed > 0)
+
+    if(speed >= 0)
         motor->direction = 0;
     else
         motor->direction = 1;
@@ -272,12 +254,10 @@ float inputSpeedHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int speed)
     if(! motor->moving)
     {
         motor->moving = 1;
-        // Start the timer for controlling the motor speed
-        // HAL_TIM_Base_Start_IT(htim);
     }
     // Convert the desired speed to pulse per frame and input to the motor
-    motor->targetPulsePerFrame = (speed * motor->encoder_rev * 1.0) * time_frame / 60000.0;
-    return motor->targetPulsePerFrame;
+    motor->targetPulsePerFrame = (speed * motor->encoder_rev) * time_frame / 60000.0;
+    return;
 }
 
 // Function to control the speed of the motor by PID algorithm
@@ -290,9 +270,7 @@ void speedControlPID(PID_motor* motor)
 
     // Get the absolute value of the motor
     uint16_t pwm_dutycycle = abs(motor->output);
-    if(pwm_dutycycle < motor->DEAD_BAND && pwm_dutycycle > 5)
-        pwm_dutycycle = motor->DEAD_BAND;
-    else if(pwm_dutycycle < 5)
+    if(pwm_dutycycle < motor->DEAD_BAND)
         pwm_dutycycle = 0;
 
     // Control the direction of the motor
@@ -307,20 +285,22 @@ void speedControlPID(PID_motor* motor)
         HAL_GPIO_WritePin(motor->motor_ports[1], motor->motor_pins[1], 1);
     }
 
-    if(pwm_dutycycle == 0)
-        motorBrake(motor);
     // Feed the value of the PWM duty cycle
     dutyCycleUpdate(pwm_dutycycle, motor);
+
+    if(pwm_dutycycle == 0)
+        motorBrake(motor);
 }
 
 // Function to handle the input command of the position control 
-uint8_t inputPositionHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int32_t position_angle, uint16_t motion_velocity, uint16_t motion_acel)
+void inputPositionHandling(PID_motor* motor, float position_angle, uint16_t motion_velocity, uint16_t motion_acel)
 {
     // Brake the motor 
     motorBrake(motor);
+    // Reset all the PID parameters
     resetPID(motor);
     if(position_angle == 0 || motion_velocity <= 0 || motion_acel <= 0)
-        return 0;
+        return;
     // Convert the target position to number of pulse
     motor->motion_profile.target_position = abs(position_angle * motor->encoder_rev) / 360.0;
     if(position_angle > 0)
@@ -339,13 +319,10 @@ uint8_t inputPositionHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int32_t
     motor->motion_profile.phase = 0;
     // Activate the motion of the motor
     motor->moving = 1;
-    // Activate the timer interrupt
-    HAL_TIM_Base_Start_IT(htim);
-    return 1;
 }
 
 // Function to control the position of the motor by P controller
-void positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor)
+uint8_t positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor)
 {
     // Update the position of the motor
     updatePosition(motor);
@@ -358,15 +335,13 @@ void positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor)
         p_output = motor->motion_profile.motion_velocity;
     else if(p_output < - motor->motion_profile.motion_velocity)
         p_output = - motor->motion_profile.motion_velocity;
-    else if((motor->direction == 0 && p_output <= 0) || (motor->direction == 1 && p_output >= 0))
+    else if((motor->direction == 0 && p_output <= 1) || (motor->direction == 1 && p_output >= -1))
     {
         dutyCycleUpdate(0, motor);
         motorBrake(motor);
         // Reaset the PID value
         resetPID(motor);
-        // Stop the timer 
-        // HAL_TIM_Base_Stop_IT(htim);
-        return;
+        return 1;
     }
     // Feed the velocity to the motor
     motor->targetPulsePerFrame = p_output;
@@ -377,4 +352,6 @@ void positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor)
         motor->direction = 1;
     // Feed the velocity to the speed controller
     speedControlPID(motor);
+
+    return 0;
 }

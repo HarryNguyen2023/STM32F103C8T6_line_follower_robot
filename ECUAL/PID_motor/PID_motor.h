@@ -78,13 +78,12 @@ typedef struct
 
 // Function prototypes
 void motorInit(PID_motor motor);
-uint32_t readEncoder(PID_motor* motor);
 void speedControlPID(PID_motor* motor);
-void positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor);
+uint8_t positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor);
 void motorBrake(PID_motor* motor);
 void resetPID(PID_motor* motor);
-void updatePID(int* pid_params, PID_motor* motor);
-float inputSpeedHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int speed);
-uint8_t inputPositionHandling(TIM_HandleTypeDef* htim, PID_motor* motor, int32_t position_angle, uint16_t motion_velocity, uint16_t motion_acel);
+void dutyCycleUpdate(uint16_t duty_cycle, PID_motor* motor);
+void inputSpeedHandling(PID_motor* motor, float speed);
+void inputPositionHandling(PID_motor* motor, float position_angle, uint16_t motion_velocity, uint16_t motion_acel);
 
 #endif

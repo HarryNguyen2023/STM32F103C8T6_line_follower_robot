@@ -10,7 +10,7 @@ void lineSensorInit(ADC_HandleTypeDef* adc, Line_sensor* line_sensor)
 }
 
 // Function to activate reading of line sensor and get the output distance
-void getSensorDistance(ADC_HandleTypeDef* adc, Line_sensor* line_sensor)
+void lineSensorDistance(ADC_HandleTypeDef* adc, Line_sensor* line_sensor)
 {
     float sensor_weight = 0;
     float sensor_sum = 0;

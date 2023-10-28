@@ -1,7 +1,7 @@
 #include "PID_motor.h"
 
 // Parameters for motor 1
-PID_motor motor1 = 
+PID_motor motor_left = 
 {
     {GPIOB, GPIOB},
     {GPIO_PIN_4, GPIO_PIN_5},
@@ -11,10 +11,10 @@ PID_motor motor1 =
     374,
     499,
     250,
-    20,
+    15,
     {
-        17.5, 
-        1.0,
+        34.0,
+        1.4,
         0.0,
     },
     {
@@ -43,7 +43,7 @@ PID_motor motor1 =
 };
 
 // Parameters for motor 2
-PID_motor motor2 = 
+PID_motor motor_right = 
 {
     {GPIOB, GPIOA},
     {GPIO_PIN_3, GPIO_PIN_15},
@@ -53,10 +53,10 @@ PID_motor motor2 =
     374,
     499,
     250,
-    20,
+    15,
     {
-        19.0, 
-        1.0,
+        33.0, 
+        1.4,
         0.0,
     },
     {
