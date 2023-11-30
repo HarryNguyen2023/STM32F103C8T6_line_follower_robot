@@ -125,7 +125,7 @@ C_INCLUDES =  \
 -IDrivers/CMSIS/Include \
 -IECUAL/Line_sensor \
 -IECUAL/PID_motor \
--IECUAL/Line_controllerT
+-IECUAL/Line_controller
 
 
 # compile gcc flags

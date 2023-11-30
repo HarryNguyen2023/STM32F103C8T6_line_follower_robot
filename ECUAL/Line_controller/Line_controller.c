@@ -22,14 +22,16 @@ void lineControllerInit(ADC_HandleTypeDef* adc, PID_motor motor_left, PID_motor 
 }
 
 // Function to calculate output signal of the PD line controller 
-void lineControllerPID(ADC_HandleTypeDef* adc, PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller)
+void lineControllerPID(TIM_HandleTypeDef* htim, ADC_HandleTypeDef* adc, PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller)
 {
     // Read the line sensor via DMA
     lineSensorDistance(adc, &line_controller->robot_line_sensor);
     // Check if the line has ended
-    if(line_controller->robot_line_sensor.sensor_output > 1)
+    if(line_controller->robot_line_sensor.adc_sensor_val[0] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[1] < 2500 &&
+    line_controller->robot_line_sensor.adc_sensor_val[2] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[3] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[4] < 2500)
     {
         robotStop(motor_left, motor_right);
+        HAL_TIM_Base_Stop_IT(htim);
         return;
     }
     line_controller->e2 = line_controller->robot_line_sensor.sensor_output - line_controller->line_target;
@@ -50,6 +52,13 @@ void linearVelocityUpdate(Line_controller* line_controller, float linear_vec)
     line_controller->linear_velocity = (linear_vec * 1000.0) / (line_controller->wheel_diameter * PI) * 60;
 }
 
+// Function to update the PID parameter of the line following controller
+void linePIDUpdate(Line_controller* line_controller, float Kp, float Kd)
+{
+    line_controller->line_Kp = Kp;
+    line_controller->line_Kd = Kd;
+}
+
 // Function to stop the whole robot when end of line
 void robotStop(PID_motor* motor_left, PID_motor* motor_right)
 {
@@ -64,19 +73,19 @@ void robotStop(PID_motor* motor_left, PID_motor* motor_right)
 // Function to command the robot to turn left
 void robotRotateLeft(PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller, uint16_t motion_velocity, uint16_t motion_acel)
 {
-    float right_motor_angle = (line_controller->axle_length / (2.0 * line_controller->wheel_diameter)) * 360;
+    float right_motor_angle = (line_controller->axle_length / (2.5 * line_controller->wheel_diameter)) * 360;
     // Input the path for 2 wheels
-    inputPositionHandling(motor_left, 0, 0, 0);
+    inputPositionHandling(motor_left, 0.0, 0, 0);
     inputPositionHandling(motor_right, right_motor_angle, motion_velocity, motion_acel);
 }
 
 // Function to command the robot to turn right
 void robotRotateRight(PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller, uint16_t motion_velocity, uint16_t motion_acel)
 {
-    float left_motor_angle = (line_controller->axle_length / (2.0 * line_controller->wheel_diameter)) * 360;
+    float left_motor_angle = (line_controller->axle_length / (2.5 * line_controller->wheel_diameter)) * 360;
     // Input the path for 2 wheels
     inputPositionHandling(motor_left, left_motor_angle, motion_velocity, motion_acel);
-    inputPositionHandling(motor_right, 0, 0, 0);
+    inputPositionHandling(motor_right, 0.0, 0, 0);
 }
 
 void robotLinear(PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller, float distance, uint16_t motion_velocity, uint16_t motion_acel)

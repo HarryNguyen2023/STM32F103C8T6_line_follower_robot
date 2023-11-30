@@ -79,7 +79,7 @@ static void MX_TIM4_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
-
+static void sequencePosition(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -122,70 +122,83 @@ Obstacle_avoidance obstacle_avoidance = ROTATE_RIGHT_1;
 uint8_t tx_buffer[20];
 uint8_t count = 0;
 
-uint8_t* obs_command;
+uint8_t obs_command[1];
+uint8_t i2c_flag = 1;
 uint8_t last_obs_command = 'a';
 uint8_t running = 0;
 
 // // Function to handle I2C DMA service
 void HAL_I2C_MasterRxCpltCallback (I2C_HandleTypeDef* hi2c)
 {
-  // Check if 2 consecutive values are the same to avoid noise
-  if(*obs_command == last_obs_command && last_obs_command != 'a')
+  if(i2c_flag)
   {
-    // Reduce the speed of the motor when close to the obstacle
-    if(last_obs_command == 'b')
+    // Check if 2 consecutive values are the same to avoid noise
+    if(obs_command[0] == last_obs_command && last_obs_command != 'a')
     {
-      linearVelocityUpdate(&robot_line_controller, 0.2);
-      obstacle_condition = CLOSE;
-    } 
-    // Change to position control mode when close to the obstalce    
-    else if(last_obs_command == 'c')
-    {
-      robotStop(&motor_left, &motor_right);
-      obstacle_condition = ATTEMPING;
-      current_controller = POSITION_CONTROLLER;
+      // Reduce the speed of the motor when close to the obstacle
+      if(last_obs_command == 'b')
+      {
+        linearVelocityUpdate(&robot_line_controller, 0.2);
+        obstacle_condition = CLOSE;
+      } 
+      // Change to position control mode when close to the obstalce    
+      else if(last_obs_command == 'c')
+      {
+        robotStop(&motor_left, &motor_right);
+        obstacle_condition = ATTEMPING;
+        current_controller = POSITION_CONTROLLER;
+      }
     }
+    last_obs_command = obs_command[0];
   }
-  last_obs_command = *obs_command;
+  i2c_flag = 1 - i2c_flag;
 }
 
 // Function to handle timer interrupt callback 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
-  // Get the obstacle distance value from the slave controller
-  if(obstacle_condition < ATTEMPING)
+  if(htim->Instance == TIM1)
   {
-    HAL_I2C_Master_Receive_DMA(&hi2c1, ((SLAVE_ADD << 0x01) | 0x01), obs_command, 1);
-  }
-
-  switch (current_controller)
-  {
-  case LINE_CONTROLLER:
-    // Activate the line controller every 100ms
-    if(++count == 5)
+    // Get the obstacle distance value from the slave controller
+    if(obstacle_condition < ATTEMPING)
     {
-      count = 0;
-      lineControllerPID(&hadc1, &motor_left, &motor_right, &robot_line_controller);
+      HAL_I2C_Master_Receive_DMA(&hi2c1, ((SLAVE_ADD << 0x01) | 0x01), obs_command, 1);
     }
-    // Control the speed of 2 motors every 20ms
-    speedControlPID(&motor_left);
-    speedControlPID(&motor_right);
 
-    break;
-  
-  case POSITION_CONTROLLER:
-    // Control the position of the robot every 20ms
-    if(positionControlPID(&htim1, &motor_left) && positionControlPID(&htim1, &motor_right))
-      running = 0;  
-    break;
+    switch (current_controller)
+    {
+    case LINE_CONTROLLER:
+      // Activate the line controller every 100ms
+      if(++count == 5)
+      {
+        count = 0;
+        lineControllerPID(htim, &hadc1, &motor_left, &motor_right, &robot_line_controller);
+      }
+      // Control the speed of 2 motors every 20ms
+      speedControlPID(&motor_left);
+      speedControlPID(&motor_right);
 
-  default:
-    break;
+      break;
+    
+    case POSITION_CONTROLLER:
+      sequencePosition();
+      // Control the position of the robot every 20ms
+      uint8_t pos_l = positionControlPID(&motor_left);
+      uint8_t pos_r = positionControlPID(&motor_right);
+      if(pos_l && pos_r)
+      {
+        running = 0;  
+      }
+      break;
+
+    default:
+      break;
+    }
+
+    // Send the real-time data via Bluetooth to computer
+    sprintf((char*)tx_buffer,"%ld,%ld,%.2f\r\n", motor_left.real_speed, motor_right.real_speed, robot_line_controller.e2);
+    HAL_UART_Transmit(&huart1, tx_buffer, strlen((char*)tx_buffer), 100);
   }
-
-  // Send the real-time data via Bluetooth to computer
-  sprintf((char*)tx_buffer,"%ld,%ld,%.2f\r\n", motor_left.real_speed, motor_right.real_speed, robot_line_controller.e2);
-  HAL_UART_Transmit_DMA(&huart1, tx_buffer, strlen((char*)tx_buffer));
 }
 
 
@@ -243,72 +256,26 @@ int main(void)
   HAL_Delay(1000);
 
   // Scan for slave device
-  if(HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(SLAVE_ADD << 1), 3, 5)  != HAL_OK)
-  {
-    HAL_UART_Transmit_DMA(&huart1, (uint8_t*)"Error: Slave no found\r\n", 24);
-    return 0;
-  }
+  // if(HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(SLAVE_ADD << 1), 3, 5)  != HAL_OK)
+  // {
+  //   HAL_UART_Transmit_DMA(&huart1, (uint8_t*)"Error: Slave no found\r\n", 24);
+  //   return 0;
+  // }
 
   // Send signal message via Bluetooth
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t*)"System is ready\r\n", 17);
+  HAL_UART_Transmit(&huart1, (uint8_t*)"System is ready\r\n", 17, 100);
 
   // Initiate the system overall TIMER
   HAL_TIM_Base_Start_IT(&htim1);
 
   // Read the line sensor for the first time
-  lineControllerPID(&hadc1, &motor_left, &motor_right, &robot_line_controller);
+  lineControllerPID(&htim1, &hadc1, &motor_left, &motor_right, &robot_line_controller);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    // Sequence to avoid obstacle
-    if(obstacle_condition == ATTEMPING && current_controller == POSITION_CONTROLLER)
-    {
-      if(!running)
-      {
-        switch (obstacle_avoidance++)
-        {
-        case ROTATE_RIGHT_1:
-          robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 100, 20);
-          break;
-
-        case LINEAR_100_1:
-          robotLinear(&motor_left, &motor_right, &robot_line_controller, 100, 120, 30);
-          break;
-        
-        case ROTATE_LEFT_1:
-          robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 100, 20);
-          break;
-
-        case LINEAR_200:
-          robotLinear(&motor_left, &motor_right, &robot_line_controller, 200, 120, 30);
-          break;
-
-        case ROTATE_LEFT_2:
-          robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 100, 20);
-          break;
-        
-        case LINEAR_100_2:
-          robotLinear(&motor_left, &motor_right, &robot_line_controller, 100, 120, 30);
-          break;
-
-        case ROTATE_RIGHT_2:
-          robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 100, 20);
-          break;
-        
-        case DONE:
-          obstacle_condition = DONE_AVOID;
-          current_controller = LINE_CONTROLLER;
-          break;
-
-        default:
-          break;
-        }
-        running = 1;
-      }
-    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -783,6 +750,58 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+// Funciton to update the sequence of the obstacle avoidance algorithm
+static void sequencePosition()
+{
+  // Sequence to avoid obstacle
+  if(obstacle_condition == ATTEMPING && current_controller == POSITION_CONTROLLER)
+  {
+    if(!running)
+    {
+      switch (obstacle_avoidance++)
+      {
+      case ROTATE_RIGHT_1:
+        robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+        break;
+
+      case LINEAR_100_1:
+        robotLinear(&motor_left, &motor_right, &robot_line_controller, 100, 120, 20);
+        break;
+      
+      case ROTATE_LEFT_1:
+        robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+        break;
+
+      case LINEAR_200:
+        robotLinear(&motor_left, &motor_right, &robot_line_controller, 550, 120, 20);
+        break;
+
+      case ROTATE_LEFT_2:
+        robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+        break;
+      
+      case LINEAR_100_2:
+        robotLinear(&motor_left, &motor_right, &robot_line_controller, 100, 120, 20);
+        break;
+
+      case ROTATE_RIGHT_2:
+        robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 100, 20);
+        break;
+      
+      case DONE:
+        obstacle_condition = DONE_AVOID;
+        current_controller = LINE_CONTROLLER;
+        linePIDUpdate(&robot_line_controller, 5.0, 3.0);
+        linearVelocityUpdate(&robot_line_controller, 0.4);
+        break;
+
+      default:
+        break;
+      }
+      running = 1;
+    }
+  }
+}
 
 /* USER CODE END 4 */
 

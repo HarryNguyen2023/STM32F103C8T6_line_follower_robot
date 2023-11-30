@@ -79,7 +79,7 @@ typedef struct
 // Function prototypes
 void motorInit(PID_motor motor);
 void speedControlPID(PID_motor* motor);
-uint8_t positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor);
+uint8_t positionControlPID(PID_motor* motor);
 void motorBrake(PID_motor* motor);
 void resetPID(PID_motor* motor);
 void dutyCycleUpdate(uint16_t duty_cycle, PID_motor* motor);

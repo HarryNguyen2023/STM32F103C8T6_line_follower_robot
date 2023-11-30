@@ -16,24 +16,22 @@ static uint32_t readEncoder(PID_motor* motor);
 // Function to get the output value of the PID speed controller
 static void outputSpeedPID(PID_motor* motor)
 {
-    int32_t feedback;
     float error, output, prop;
     // Get number of the encoder pulse in the last time frame
     if(motor->direction == 0 && (motor->current_encoder < motor->prev_encoder) && (motor->prev_encoder - motor->current_encoder > 16000))
     {
-        feedback = (65535 / 4) - motor->prev_encoder;
-        feedback += motor->current_encoder;
+        motor->real_speed = (65535 / 4) - motor->prev_encoder;
+        motor->real_speed += motor->current_encoder;
     }
     else if(motor->direction == 1 && (motor->current_encoder > motor->prev_encoder) && (motor->current_encoder - motor->prev_encoder > 16000) )
     {
-        feedback = motor->current_encoder - (65535 / 4);
-        feedback -= motor->prev_encoder;
+        motor->real_speed = motor->current_encoder - (65535 / 4);
+        motor->real_speed -= motor->prev_encoder;
     }
     else
-        feedback = motor->current_encoder - motor->prev_encoder;
+        motor->real_speed = motor->current_encoder - motor->prev_encoder;
     // Get the error of the number of encoder per time frame
-    error = motor->targetPulsePerFrame - feedback;
-    motor->real_speed = feedback;
+    error = motor->targetPulsePerFrame - motor->real_speed;
     // Get the output of the PID controller with the new formula to avoid derivative kick as well as accumulation error when updating PID parameters
     prop = motor->speed_controller.Kp * error;
     motor->integral_error += motor->speed_controller.Ki * error;
@@ -43,8 +41,8 @@ static void outputSpeedPID(PID_motor* motor)
     else 
         motor->lim_max_integ = 0;
     
-    if(- motor->MAX_PWM < prop)
-        motor->lim_min_integ = - motor->MAX_PWM - prop;
+    if(0 < prop)
+        motor->lim_min_integ = 0 - prop;
     else
         motor->lim_min_integ = 0;
     // Constraint the integral
@@ -53,15 +51,15 @@ static void outputSpeedPID(PID_motor* motor)
     else if(motor->integral_error < motor->lim_min_integ)
         motor->integral_error = motor->lim_min_integ;
 
-    output = prop + motor->speed_controller.Kd * (feedback - motor->prev_encoder_feedback) + motor->integral_error;
+    output = prop + motor->speed_controller.Kd * (motor->real_speed - motor->prev_encoder_feedback) + motor->integral_error;
     // Update the parameters
     motor->prev_encoder = motor->current_encoder;
-    motor->prev_encoder_feedback = feedback;
+    motor->prev_encoder_feedback = motor->real_speed;
     // Limit the ouput velocity of the motor
     if(output > motor->MAX_PWM)
         output = motor->MAX_PWM;
-    else if(output < - motor->MAX_PWM)
-        output = - motor->MAX_PWM;
+    else if(output < 0)
+        output = 0;
     motor->output = output;
 }
 
@@ -243,8 +241,8 @@ void inputSpeedHandling(PID_motor* motor, float speed)
     // Rescale the input rpm speed
     if(speed > motor->MAX_INPUT_SPEED)
         speed = motor->MAX_INPUT_SPEED;
-    else if(speed < - motor->MAX_INPUT_SPEED)
-        speed = - motor->MAX_INPUT_SPEED;
+    else if(speed < 0)
+        speed = 0;
 
     if(speed >= 0)
         motor->direction = 0;
@@ -299,11 +297,11 @@ void inputPositionHandling(PID_motor* motor, float position_angle, uint16_t moti
     motorBrake(motor);
     // Reset all the PID parameters
     resetPID(motor);
-    if(position_angle == 0 || motion_velocity <= 0 || motion_acel <= 0)
+    if(motion_velocity < 0 || motion_acel < 0)
         return;
     // Convert the target position to number of pulse
     motor->motion_profile.target_position = abs(position_angle * motor->encoder_rev) / 360.0;
-    if(position_angle > 0)
+    if(position_angle >= - 0.0)
         motor->direction = 0;
     else
         motor->direction = 1;
@@ -322,21 +320,24 @@ void inputPositionHandling(PID_motor* motor, float position_angle, uint16_t moti
 }
 
 // Function to control the position of the motor by P controller
-uint8_t positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor)
+uint8_t positionControlPID(PID_motor* motor)
 {
-    // Update the position of the motor
+     // Update the position of the motor
     updatePosition(motor);
     // Create motion profile of the robot
-    motionProfileTracking(motor);
+    uint8_t end = motionProfileTracking(motor);
     // Update the P controller parameters
     float p_output = (motor->motion_profile.command_position - motor->motion_profile.current_position) * motor->motion_profile.pos_Kp;
+
     // Limit the input velocity
     if(p_output > motor->motion_profile.motion_velocity)
         p_output = motor->motion_profile.motion_velocity;
     else if(p_output < - motor->motion_profile.motion_velocity)
         p_output = - motor->motion_profile.motion_velocity;
-    else if((motor->direction == 0 && p_output <= 1) || (motor->direction == 1 && p_output >= -1))
+
+    if((motor->direction == 0 && p_output <= 0) || (motor->direction == 1 && p_output >= 0) || end)
     {
+        motor->real_speed = 0;
         dutyCycleUpdate(0, motor);
         motorBrake(motor);
         // Reaset the PID value
@@ -346,12 +347,11 @@ uint8_t positionControlPID(TIM_HandleTypeDef* htim, PID_motor* motor)
     // Feed the velocity to the motor
     motor->targetPulsePerFrame = p_output;
     // Get the direction of the motion
-    if(p_output > 0)
+    if(p_output >= 0)
         motor->direction = 0;
     else
         motor->direction = 1;
     // Feed the velocity to the speed controller
     speedControlPID(motor);
-
     return 0;
 }
