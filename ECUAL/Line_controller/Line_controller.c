@@ -22,7 +22,7 @@ void lineControllerInit(ADC_HandleTypeDef* adc, PID_motor motor_left, PID_motor 
 }
 
 // Function to calculate output signal of the PD line controller 
-void lineControllerPID(TIM_HandleTypeDef* htim, ADC_HandleTypeDef* adc, PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller)
+void lineControllerPID(ADC_HandleTypeDef* adc, PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller)
 {
     // Read the line sensor via DMA
     lineSensorDistance(adc, &line_controller->robot_line_sensor);
@@ -30,17 +30,34 @@ void lineControllerPID(TIM_HandleTypeDef* htim, ADC_HandleTypeDef* adc, PID_moto
     if(line_controller->robot_line_sensor.adc_sensor_val[0] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[1] < 2500 &&
     line_controller->robot_line_sensor.adc_sensor_val[2] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[3] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[4] < 2500)
     {
+        linearVelocityUpdate(line_controller, 0.0);
         robotStop(motor_left, motor_right);
-        HAL_TIM_Base_Stop_IT(htim);
-        return;
     }
+
+    // Change the PID parameters for different path
+    if(line_controller->robot_line_sensor.adc_sensor_val[2] >= line_controller->robot_line_sensor.adc_sensor_val[1] && line_controller->robot_line_sensor.adc_sensor_val[2] >= line_controller->robot_line_sensor.adc_sensor_val[3])
+    {
+        linePIDUpdate(line_controller, 1.15, 2.5);
+    }
+    else
+    {
+        linePIDUpdate(line_controller, 5.75, 3.25);
+    }
+
     line_controller->e2 = line_controller->robot_line_sensor.sensor_output - line_controller->line_target;
     // Get the angular velocity of the robot by PD controller
-    line_controller->angular_velocity = line_controller->line_Kp * line_controller->e2 + line_controller->line_Kd * (line_controller->robot_line_sensor.sensor_output - line_controller->prev_sensor_feedback);
+    line_controller->angular_velocity = line_controller->line_Kp * line_controller->e2 + line_controller->line_Kd * 
+    (line_controller->robot_line_sensor.sensor_output - line_controller->prev_sensor_feedback);
     line_controller->prev_sensor_feedback = line_controller->robot_line_sensor.sensor_output;
 
     float left_motor_speed = line_controller->linear_velocity + line_controller->angular_velocity;
     float right_motor_speed = line_controller->linear_velocity - line_controller->angular_velocity;
+
+    // Case find the cross section
+    if(line_controller->robot_line_sensor.adc_sensor_val[0] > 3000 && line_controller->robot_line_sensor.adc_sensor_val[4] > 3000)
+    {
+        left_motor_speed += 20;
+    }
     // Assign the speed to the motor controller
     inputSpeedHandling(motor_left, left_motor_speed);
     inputSpeedHandling(motor_right, right_motor_speed);
@@ -73,16 +90,16 @@ void robotStop(PID_motor* motor_left, PID_motor* motor_right)
 // Function to command the robot to turn left
 void robotRotateLeft(PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller, uint16_t motion_velocity, uint16_t motion_acel)
 {
-    float right_motor_angle = (line_controller->axle_length / (2.5 * line_controller->wheel_diameter)) * 360;
+    float right_motor_angle = (line_controller->axle_length / (2.75 * line_controller->wheel_diameter)) * 360;
     // Input the path for 2 wheels
     inputPositionHandling(motor_left, 0.0, 0, 0);
     inputPositionHandling(motor_right, right_motor_angle, motion_velocity, motion_acel);
 }
 
 // Function to command the robot to turn right
-void robotRotateRight(PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller, uint16_t motion_velocity, uint16_t motion_acel)
+void robotRotateRight(PID_motor* motor_left, PID_motor* motor_right, Line_controller* line_controller, uint16_t motion_velocity, uint16_t motion_acel, float offset)
 {
-    float left_motor_angle = (line_controller->axle_length / (2.5 * line_controller->wheel_diameter)) * 360;
+    float left_motor_angle = ((line_controller->axle_length / (2.75 * line_controller->wheel_diameter)) * 360) + offset;
     // Input the path for 2 wheels
     inputPositionHandling(motor_left, left_motor_angle, motion_velocity, motion_acel);
     inputPositionHandling(motor_right, 0.0, 0, 0);

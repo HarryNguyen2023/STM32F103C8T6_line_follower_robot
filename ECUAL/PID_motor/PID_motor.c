@@ -301,7 +301,7 @@ void inputPositionHandling(PID_motor* motor, float position_angle, uint16_t moti
         return;
     // Convert the target position to number of pulse
     motor->motion_profile.target_position = abs(position_angle * motor->encoder_rev) / 360.0;
-    if(position_angle >= - 0.0)
+    if(position_angle >= 0.0)
         motor->direction = 0;
     else
         motor->direction = 1;
