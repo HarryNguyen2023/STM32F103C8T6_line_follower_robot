@@ -23,7 +23,7 @@ void lineSensorDistance(ADC_HandleTypeDef* adc, Line_sensor* line_sensor)
         sensor_weight += line_sensor->sensor_weight[i] * line_sensor->sensor_calib[i];
         sensor_sum += line_sensor->sensor_calib[i];
     }
-    line_sensor->sensor_output = sensor_weight / sensor_sum + 0.6;
+    line_sensor->sensor_output = sensor_weight / sensor_sum + 0.4;
 }
 
 

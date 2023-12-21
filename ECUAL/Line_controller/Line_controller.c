@@ -31,17 +31,18 @@ void lineControllerPID(ADC_HandleTypeDef* adc, PID_motor* motor_left, PID_motor*
     line_controller->robot_line_sensor.adc_sensor_val[2] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[3] < 2500 && line_controller->robot_line_sensor.adc_sensor_val[4] < 2500)
     {
         linearVelocityUpdate(line_controller, 0.0);
+        linePIDUpdate(line_controller, 0.0, 0.0);
         robotStop(motor_left, motor_right);
     }
 
     // Change the PID parameters for different path
     if(line_controller->robot_line_sensor.adc_sensor_val[2] >= line_controller->robot_line_sensor.adc_sensor_val[1] && line_controller->robot_line_sensor.adc_sensor_val[2] >= line_controller->robot_line_sensor.adc_sensor_val[3])
     {
-        linePIDUpdate(line_controller, 1.15, 2.5);
+        linePIDUpdate(line_controller, 1.15, 2.65);
     }
     else
     {
-        linePIDUpdate(line_controller, 5.75, 3.25);
+        linePIDUpdate(line_controller, 5.95, 3.65);
     }
 
     line_controller->e2 = line_controller->robot_line_sensor.sensor_output - line_controller->line_target;

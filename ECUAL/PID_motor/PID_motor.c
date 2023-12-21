@@ -224,6 +224,7 @@ void resetPID(PID_motor* motor)
     motor->targetPulsePerFrame = 0.0;
     motor->moving = 0;
     motor->direction = 0;
+    motor->real_speed = 0;
     motor->motion_profile.command_position = 0;
     motor->motion_profile.command_velocity = 0;
     motor->motion_profile.current_position = 0;
@@ -301,7 +302,7 @@ void inputPositionHandling(PID_motor* motor, float position_angle, uint16_t moti
         return;
     // Convert the target position to number of pulse
     motor->motion_profile.target_position = abs(position_angle * motor->encoder_rev) / 360.0;
-    if(position_angle >= 0.0)
+    if(position_angle >= - 0.0)
         motor->direction = 0;
     else
         motor->direction = 1;
@@ -317,6 +318,7 @@ void inputPositionHandling(PID_motor* motor, float position_angle, uint16_t moti
     motor->motion_profile.phase = 0;
     // Activate the motion of the motor
     motor->moving = 1;
+    return;
 }
 
 // Function to control the position of the motor by P controller
@@ -328,16 +330,14 @@ uint8_t positionControlPID(PID_motor* motor)
     uint8_t end = motionProfileTracking(motor);
     // Update the P controller parameters
     float p_output = (motor->motion_profile.command_position - motor->motion_profile.current_position) * motor->motion_profile.pos_Kp;
-
     // Limit the input velocity
     if(p_output > motor->motion_profile.motion_velocity)
         p_output = motor->motion_profile.motion_velocity;
-    else if(p_output < - motor->motion_profile.motion_velocity)
-        p_output = - motor->motion_profile.motion_velocity;
+    else if(p_output < 0)
+        p_output = 0;
 
     if((motor->direction == 0 && p_output <= 0) || (motor->direction == 1 && p_output >= 0) || end)
     {
-        motor->real_speed = 0;
         dutyCycleUpdate(0, motor);
         motorBrake(motor);
         // Reaset the PID value

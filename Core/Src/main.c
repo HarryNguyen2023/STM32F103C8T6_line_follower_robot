@@ -61,7 +61,6 @@ TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
 UART_HandleTypeDef huart1;
-DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
 
@@ -169,7 +168,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
     {
     case LINE_CONTROLLER:
       // Activate the line controller every 100ms
-      if(++count == 5)
+      if(++count == 4)
       {
         count = 0;
         lineControllerPID(&hadc1, &motor_left, &motor_right, &robot_line_controller);
@@ -188,6 +187,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
       if(pos_l && pos_r)
       {
         running = 0;  
+        pos_l = 0;
+        pos_r = 0;
+        // HAL_UART_Transmit(&huart1, "Done\r\n", 6, 100);
       }
       break;
 
@@ -699,9 +701,6 @@ static void MX_DMA_Init(void)
   /* DMA1_Channel1_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
-  /* DMA1_Channel4_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
   /* DMA1_Channel7_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Channel7_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel7_IRQn);
@@ -761,37 +760,37 @@ static void sequencePosition()
       switch (obstacle_avoidance)
       {
       case ROTATE_RIGHT_1:
-        robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 120, 20, 25);
+        robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 120, 30, 25);
         obstacle_avoidance = LINEAR_100_1;
         break;
 
       case LINEAR_100_1:
-        robotLinear(&motor_left, &motor_right, &robot_line_controller, 150, 120, 20);
+        robotLinear(&motor_left, &motor_right, &robot_line_controller, 200, 120, 30);
         obstacle_avoidance = ROTATE_LEFT_1;
         break;
       
       case ROTATE_LEFT_1:
-        robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 120, 20);
+        robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 120, 30);
         obstacle_avoidance = LINEAR_200;
         break;
 
       case LINEAR_200:
-        robotLinear(&motor_left, &motor_right, &robot_line_controller, 350, 120, 20);
+        robotLinear(&motor_left, &motor_right, &robot_line_controller, 350, 120, 30);
         obstacle_avoidance = ROTATE_LEFT_2;
         break;
 
       case ROTATE_LEFT_2:
-        robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 120, 20);
+        robotRotateLeft(&motor_left, &motor_right, &robot_line_controller, 120, 30);
         obstacle_avoidance = LINEAR_100_2;
         break;
       
       case LINEAR_100_2:
-        robotLinear(&motor_left, &motor_right, &robot_line_controller, 115, 120, 20);
+        robotLinear(&motor_left, &motor_right, &robot_line_controller, 200, 120, 30);
         obstacle_avoidance = ROTATE_RIGHT_2;
         break;
 
       case ROTATE_RIGHT_2:
-        robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 120, 20, 0.0);
+        robotRotateRight(&motor_left, &motor_right, &robot_line_controller, 120, 30, 0.0);
         obstacle_avoidance = DONE;
         break;
       
@@ -807,6 +806,7 @@ static void sequencePosition()
       running = 1;
     }
   }
+  return;
 }
 
 /* USER CODE END 4 */
